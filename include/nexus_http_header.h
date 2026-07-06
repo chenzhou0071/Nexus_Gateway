@@ -23,4 +23,10 @@ int         nexus_headers_add(nexus_headers_t *h,
 const char *nexus_headers_get(const nexus_headers_t *h, const char *name);
 void        nexus_headers_reset(nexus_headers_t *h);
 
+// 覆盖/新增头部，同名直接替换
+int nexus_headers_set(nexus_headers_t *h, const char *name, const char *value);
+
+// 删除指定头部（大小写不敏感）
+void nexus_headers_remove(nexus_headers_t *h, const char *name);
+
 #endif

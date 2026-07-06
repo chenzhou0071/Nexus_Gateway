@@ -54,3 +54,43 @@ const char *nexus_headers_get(const nexus_headers_t *h, const char *name) {
     free(lower_name);
     return NULL;
 }
+
+int nexus_headers_set(nexus_headers_t *h, const char *name, const char *value) {
+    if (!h || !name || !value) return -1;
+
+    // 先删除同名头部（大小写不敏感）
+    nexus_headers_remove(h, name);
+
+    // 再添加新头部
+    return nexus_headers_add(h, name, strlen(name), value, strlen(value));
+}
+
+void nexus_headers_remove(nexus_headers_t *h, const char *name) {
+    if (!h || !name) return;
+
+    char *lower_name = normalize_lower_strdup(name);
+    uint32_t target = nexus_hash_fnv1a(lower_name, strlen(lower_name));
+
+    int removed = 0;
+    for (int i = 0; i < h->count; ) {
+        // 先检查哈希，再检查字符串（避免哈希冲突误删）
+        if (h->headers[i].hash == target &&
+            strcmp(h->headers[i].name, lower_name) == 0) {
+            free(h->headers[i].name);
+            free(h->headers[i].value);
+
+            // 后续头部前移
+            for (int j = i; j < h->count - 1; j++) {
+                h->headers[j] = h->headers[j + 1];
+            }
+
+            h->count--;
+            removed++;
+            // 不 i++，继续检查当前位置（前移后的新元素）
+        } else {
+            i++;  // 只有没删除时才前进
+        }
+    }
+
+    free(lower_name);
+}
