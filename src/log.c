@@ -64,3 +64,46 @@ void nexus_log_error(int level, const char *fmt, ...) {
     fputc('\n', g_error_fp);
     pthread_mutex_unlock(&g_error_mu);
 }
+
+void nexus_log_access_full(
+    const char *client_ip,
+    uint16_t   client_port,
+    const char *method,
+    const char *path,
+    const char *version,
+    int        status_code,
+    size_t     bytes_sent,
+    const char *user_agent,
+    const char *req_id,
+    const char *upstream_addr,
+    double     duration_ms
+) {
+    if (!g_access_fp) return;
+
+    // 格式化时间戳：[06/Jul/2026:22:20:39 +0800]
+    char ts[64];
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    strftime(ts, sizeof(ts), "[%d/%b/%Y:%H:%M:%S %z]", &tm);
+
+    pthread_mutex_lock(&g_access_mu);
+
+    // Nginx 风格格式：IP:PORT - - [timestamp] "METHOD PATH VERSION" STATUS BYTES "REFERER" "UA" req_id=ID upstream=ADDR duration=Xms
+    fprintf(g_access_fp, "%s:%u - - %s \"%s %s %s\" %d %zu \"%s\" \"%s\" req_id=%s upstream=%s duration=%.1fms\n",
+             client_ip ? client_ip : "-",
+             client_port,
+             ts,
+             method ? method : "-",
+             path ? path : "-",
+             version ? version : "-",
+             status_code,
+             bytes_sent,
+             "-",  // Referer（暂不支持）
+             user_agent ? user_agent : "-",
+             req_id ? req_id : "-",
+             upstream_addr ? upstream_addr : "-",
+             duration_ms);
+
+    pthread_mutex_unlock(&g_access_mu);
+}
