@@ -3,6 +3,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 void nexus_headers_init(nexus_headers_t *h) { memset(h, 0, sizeof(*h)); }
 
