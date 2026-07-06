@@ -22,6 +22,11 @@ static char *normalize_lower(const char *s, size_t len) {
     return p;
 }
 
+static char *normalize_lower_strdup(const char *s) {
+    size_t len = strlen(s);
+    return normalize_lower(s, len);
+}
+
 int nexus_headers_add(nexus_headers_t *h,
                       const char *name, size_t name_len,
                       const char *value, size_t value_len) {
@@ -38,12 +43,14 @@ int nexus_headers_add(nexus_headers_t *h,
 }
 
 const char *nexus_headers_get(const nexus_headers_t *h, const char *name) {
-    size_t nlen = strlen(name);
-    uint32_t target = nexus_hash_fnv1a(name, nlen);
+    char *lower_name = normalize_lower_strdup(name);
+    uint32_t target = nexus_hash_fnv1a(lower_name, strlen(lower_name));
     for (int i = 0; i < h->count; i++) {
-        if (h->headers[i].hash == target && strcasecmp(h->headers[i].name, name) == 0) {
+        if (h->headers[i].hash == target) {
+            free(lower_name);
             return h->headers[i].value;
         }
     }
+    free(lower_name);
     return NULL;
 }

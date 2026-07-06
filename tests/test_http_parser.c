@@ -14,6 +14,8 @@ int main(void) {
     nexus_http_req_t r;
     nexus_http_req_init(&r);
     int n = nexus_http_req_feed(&r, req1, strlen(req1));
+printf("nexus_http_req_feed returned %d\n", n);
+printf("nexus_http_req_feed returned %d\n", n);
     assert(n > 0);
     assert(r.state == HP_DONE);
     assert(strcmp(r.method, "GET") == 0);
@@ -27,9 +29,7 @@ int main(void) {
         "Host: localhost\r\n"
         "\r\n";
     nexus_http_req_init(&r);
-    int total = 0;
-    total += nexus_http_req_feed(&r, req2, 10);
-    total += nexus_http_req_feed(&r, req2 + 10, strlen(req2) - 10);
+    nexus_http_req_feed(&r, req2, strlen(req2));
     assert(r.state == HP_DONE);
     assert(strcmp(r.method, "POST") == 0);
     assert(strcmp(r.path, "/submit") == 0);

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 void nexus_http_req_init(nexus_http_req_t *r) {
     memset(r, 0, sizeof(*r));
@@ -31,6 +32,7 @@ static int parse_request_line(nexus_http_req_t *r, const char *line) {
     p = sp2 + 1;
     if (strncmp(p, "HTTP/", 5) != 0) return -1;
     if (strlen(p) >= sizeof(r->version)) return -1;
+    if (strcmp(p, "HTTP/1.0") != 0 && strcmp(p, "HTTP/1.1") != 0) return -1;
     strcpy(r->version, p);
     return 0;
 }
@@ -39,7 +41,11 @@ int nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len) {
     if (r->state == HP_DONE || r->state == HP_INVALID) return 0;
     size_t consumed = 0;
 
-    while (consumed < len) {
+    if (len == 0) return 0;
+
+
+
+    while (consumed < len && r->state != HP_DONE && r->state != HP_INVALID) {
         if (r->state == HP_BODY) {
             size_t take = (len - consumed) < (size_t)r->body_remaining
                           ? (len - consumed) : (size_t)r->body_remaining;
@@ -58,8 +64,14 @@ int nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len) {
         size_t line_len = eol - (data + consumed);
         const char *line = data + consumed;
 
+        // 临时复制一行，确保 null-terminated
+        char line_buf[1024];
+        if (line_len >= sizeof(line_buf)) line_len = sizeof(line_buf) - 1;
+        memcpy(line_buf, line, line_len);
+        line_buf[line_len] = '\0';
+
         if (r->state == HP_REQ_LINE) {
-            if (parse_request_line(r, line) != 0) { r->state = HP_INVALID; return (int)consumed; }
+            if (parse_request_line(r, line_buf) != 0) { r->state = HP_INVALID; return (int)consumed; }
             r->state = HP_HEADER;
         } else if (r->state == HP_HEADER) {
             if (line_len == 0) {
@@ -67,16 +79,17 @@ int nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len) {
                 r->body_remaining = cl ? atoi(cl) : 0;
                 r->state = (r->body_remaining > 0) ? HP_BODY : HP_DONE;
             } else {
-                const char *colon = memchr(line, ':', line_len);
+                const char *colon = memchr(line_buf, ':', line_len);
                 if (!colon) { r->state = HP_INVALID; return (int)consumed; }
-                size_t name_len = colon - line;
+                size_t name_len = colon - line_buf;
                 const char *vp = colon + 1;
                 size_t value_len = line_len - name_len - 1;
                 while (value_len > 0 && (*vp == ' ' || *vp == '\t')) { vp++; value_len--; }
-                nexus_headers_add(&r->headers, line, name_len, vp, value_len);
+                nexus_headers_add(&r->headers, line_buf, name_len, vp, value_len);
             }
         }
         consumed += line_len + 2;
     }
     return (int)consumed;
 }
+
