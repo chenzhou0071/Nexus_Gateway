@@ -22,9 +22,11 @@ int main(void) {
     assert(accepted >= 0);
 
     const char *msg = "ping";
-    write(accepted, msg, 4);
+    ssize_t wn = write(accepted, msg, 4);
+    assert(wn == 4);
     char buf[16] = {0};
-    read(cfd, buf, 4);
+    ssize_t rn = read(cfd, buf, 4);
+    assert(rn == 4);
     assert(strcmp(buf, "ping") == 0);
 
     close(accepted);
