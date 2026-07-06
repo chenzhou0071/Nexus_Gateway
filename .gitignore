@@ -17,6 +17,7 @@ bench/*.png
 *.swp
 *~
 .vscode/
+.claude/
 
 # 原始设计文档（临时草稿，不入仓）
 docs/plan/
