@@ -22,7 +22,8 @@ int main(void) {
     assert(pipe(p) == 0);
 
     nexus_epoll_add(p[0], EPOLLIN, NULL);
-    write(p[1], "x", 1);
+    ssize_t wn = write(p[1], "x", 1);
+    assert(wn == 1);
 
     int n = nexus_epoll_wait(100, on_event);
     assert(n >= 1);
