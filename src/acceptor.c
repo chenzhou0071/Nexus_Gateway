@@ -45,3 +45,16 @@ int nexus_acceptor_accept(int listen_fd) {
     int cfd = accept4(listen_fd, (struct sockaddr*)&cli, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     return cfd;
 }
+
+int nexus_acceptor_accept_ext(int listen_fd, client_addr_t *client) {
+    struct sockaddr_in cli;
+    socklen_t len = sizeof(cli);
+    int cfd = accept4(listen_fd, (struct sockaddr*)&cli, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+
+    if (cfd >= 0 && client) {
+        inet_ntop(AF_INET, &cli.sin_addr, client->ip, sizeof(client->ip));
+        client->port = ntohs(cli.sin_port);
+    }
+
+    return cfd;
+}

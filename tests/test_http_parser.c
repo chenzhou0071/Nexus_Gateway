@@ -47,6 +47,25 @@ printf("nexus_http_req_feed returned %d\n", n);
     assert(r.state == HP_INVALID);
     nexus_http_req_reset(&r);
 
+    // Task 3: 测试头部数量限制
+    char excessive_req[8192];
+    int offset = snprintf(excessive_req, sizeof(excessive_req),
+                         "GET / HTTP/1.1\r\n");
+
+    // 构造 101 个头部
+    for (int i = 0; i < 101; i++) {
+        offset += snprintf(excessive_req + offset, sizeof(excessive_req) - offset,
+                          "X-Header-%d: value\r\n", i);
+    }
+    offset += snprintf(excessive_req + offset, sizeof(excessive_req) - offset, "\r\n");
+
+    nexus_http_req_init(&r);
+    nexus_http_req_feed(&r, excessive_req, offset);
+
+    // 应被标记为非法（超过 100 个头部或超过 MAX）
+    assert(r.state == HP_INVALID);
+    nexus_http_req_reset(&r);
+
     printf("test_http_parser: all passed\n");
     return 0;
 }

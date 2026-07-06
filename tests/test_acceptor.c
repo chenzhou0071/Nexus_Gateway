@@ -32,6 +32,29 @@ int main(void) {
     close(accepted);
     close(cfd);
     close(lfd);
+
+    // Task 4: 测试 accept 扩展
+    int lfd2 = nexus_acceptor_listen("127.0.0.1", 19998, 1);
+    assert(lfd2 >= 0);
+
+    int cfd2 = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr2 = {0};
+    addr2.sin_family = AF_INET;
+    addr2.sin_port = htons(19998);
+    inet_pton(AF_INET, "127.0.0.1", &addr2.sin_addr);
+    assert(connect(cfd2, (struct sockaddr*)&addr2, sizeof(addr2)) == 0);
+
+    client_addr_t client;
+    int accepted2 = nexus_acceptor_accept_ext(lfd2, &client);
+    assert(accepted2 >= 0);
+    assert(strcmp(client.ip, "127.0.0.1") == 0);
+    assert(client.port > 0);
+
+    close(accepted2);
+    close(cfd2);
+    close(lfd2);
+    printf("test_accept_ext: PASS\n");
+
     printf("test_acceptor: all passed\n");
     return 0;
 }

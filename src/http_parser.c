@@ -85,7 +85,17 @@ int nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len) {
                 const char *vp = colon + 1;
                 size_t value_len = line_len - name_len - 1;
                 while (value_len > 0 && (*vp == ' ' || *vp == '\t')) { vp++; value_len--; }
-                nexus_headers_add(&r->headers, line_buf, name_len, vp, value_len);
+
+                // 防御性检查：头部数量限制（Task 3 新增）
+                if (r->headers.count >= 100) {
+                    r->state = HP_INVALID;  // 标记为非法
+                    return (int)consumed;
+                }
+
+                if (nexus_headers_add(&r->headers, line_buf, name_len, vp, value_len) != 0) {
+                    r->state = HP_INVALID;  // 添加失败（超过 MAX）也标记为非法
+                    return (int)consumed;
+                }
             }
         }
         consumed += line_len + 2;
