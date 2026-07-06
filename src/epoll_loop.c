@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include "nexus_epoll.h"
 #include "nexus_util.h"
 #include <stdlib.h>
