@@ -103,3 +103,36 @@ int nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len) {
     return (int)consumed;
 }
 
+// 序列化 HTTP 请求（用于改写后发送给上游）
+int nexus_http_req_serialize(const nexus_http_req_t *r, char *out, size_t out_len) {
+    if (!r || !out || out_len == 0) return -1;
+
+    // 计算所需长度：请求行 + 所有头部 + "\r\n\r\n"
+    size_t needed = snprintf(NULL, 0, "%s %s %s\r\n", r->method, r->path, r->version);
+    for (int i = 0; i < r->headers.count; i++) {
+        const nexus_header_t *h = &r->headers.headers[i];
+        if (h->name[0] != '\0') {
+            needed += snprintf(NULL, 0, "%s: %s\r\n", h->name, h->value);
+        }
+    }
+    needed += 2;  // "\r\n"
+
+    if (needed >= out_len) return -1;  // 缓冲区不够
+
+    // 序列化请求行
+    size_t pos = snprintf(out, out_len, "%s %s %s\r\n", r->method, r->path, r->version);
+
+    // 序列化所有头部
+    for (int i = 0; i < r->headers.count; i++) {
+        const nexus_header_t *h = &r->headers.headers[i];
+        if (h->name[0] != '\0') {
+            pos += snprintf(out + pos, out_len - pos, "%s: %s\r\n", h->name, h->value);
+        }
+    }
+
+    // 结束符
+    pos += snprintf(out + pos, out_len - pos, "\r\n");
+
+    return (int)pos;
+}
+

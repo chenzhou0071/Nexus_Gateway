@@ -23,5 +23,6 @@ typedef struct {
 void nexus_http_req_init(nexus_http_req_t *r);
 void nexus_http_req_reset(nexus_http_req_t *r);
 int  nexus_http_req_feed(nexus_http_req_t *r, const char *data, size_t len);
+int  nexus_http_req_serialize(const nexus_http_req_t *r, char *out, size_t out_len);
 
 #endif
