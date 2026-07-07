@@ -11,10 +11,14 @@
 #include <time.h>
 
 static FILE *g_access_fp = NULL;
-static FILE *g_error_fp = NULL;
+static FILE *g_error_fp  = NULL;
+static FILE *g_master_fp = NULL;
 static int   g_log_level = 1;
 static pthread_mutex_t g_access_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_error_mu  = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_master_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void format_ts(char *buf, size_t n);
 
 int nexus_log_init(const char *log_dir, int log_level) {
     mkdir(log_dir, 0755);
@@ -30,7 +34,36 @@ int nexus_log_init(const char *log_dir, int log_level) {
     return 0;
 }
 
+// Master 专用日志初始化（写独立的 master.log）
+int nexus_log_init_master(const char *log_dir) {
+    mkdir(log_dir, 0755);
+    char path[512];
+    snprintf(path, sizeof(path), "%s/master.log", log_dir);
+    g_master_fp = fopen(path, "a");
+    if (!g_master_fp) return -1;
+    setvbuf(g_master_fp, NULL, _IOLBF, 0);
+    return 0;
+}
+
+void nexus_log_master(int level, const char *fmt, ...) {
+    if (!g_master_fp || level < g_log_level) return;
+    const char *tag = (level >= 3) ? "ERROR" : (level == 2 ? "WARN " : "INFO ");
+    char ts[32];
+    format_ts(ts, sizeof(ts));
+    pthread_mutex_lock(&g_master_mu);
+    fprintf(g_master_fp, "[%s] [%s] [master pid=%d] ", ts, tag, getpid());
+    va_list ap; va_start(ap, fmt); vfprintf(g_master_fp, fmt, ap); va_end(ap);
+    fputc('\n', g_master_fp);
+    pthread_mutex_unlock(&g_master_mu);
+}
+
 void nexus_log_close(void) {
+    if (g_access_fp) { fclose(g_access_fp); g_access_fp = NULL; }
+    if (g_error_fp)  { fclose(g_error_fp);  g_error_fp  = NULL; }
+    if (g_master_fp) { fclose(g_master_fp); g_master_fp = NULL; }
+}
+
+void nexus_log_reset(void) {
     if (g_access_fp) { fclose(g_access_fp); g_access_fp = NULL; }
     if (g_error_fp)  { fclose(g_error_fp);  g_error_fp  = NULL; }
 }

@@ -291,6 +291,7 @@ static void on_event(int fd, uint32_t ev, void *user) {
 
 int nexus_worker_run(nexus_config_t *cfg) {
     g_cfg = cfg;
+    nexus_log_reset();
     nexus_log_init("logs", 1);
 
     // 初始化连接池
@@ -314,7 +315,8 @@ int nexus_worker_run(nexus_config_t *cfg) {
         }
     }
 
-    g_listen_fd = nexus_acceptor_listen(ip, port, 0);
+    int reuse_port = (getenv("NEXUS_WORKER") != NULL);
+    g_listen_fd = nexus_acceptor_listen(ip, port, reuse_port);
     if (g_listen_fd < 0) { perror("listen"); return 1; }
     nexus_epoll_init();
     nexus_epoll_add(g_listen_fd, EPOLLIN, NULL);
