@@ -27,3 +27,4 @@ blacklist         = 192.168.1.100, 10.0.0.5
 
 [http_rewrite]
 # 自定义头部：key:value 格式
+#如add_header = X-Custom-Trace:my-app-1.0
