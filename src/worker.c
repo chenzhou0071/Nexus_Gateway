@@ -9,6 +9,7 @@
 #include "nexus_http_rewrite.h"
 #include "nexus_log.h"
 #include "nexus_config.h"
+#include "nexus_master.h"
 #include "nexus_util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,7 @@
 static nexus_config_t *g_cfg = NULL;
 static nexus_upstream_t g_upstream;
 static int g_listen_fd = -1;
+static int g_active_conns = 0;
 
 typedef struct {
     int          fd;
@@ -46,6 +48,9 @@ typedef struct {
 
 #define PROXY_POOL_SIZE 1024
 static proxy_conn_t g_proxy_pool[PROXY_POOL_SIZE];
+
+// Worker 启动时的 drain generation（用于区分新旧 Worker）
+static int g_my_generation = -1;
 
 static proxy_conn_t *proxy_alloc(int fd) {
     for (int i = 0; i < PROXY_POOL_SIZE; i++) {
@@ -77,6 +82,24 @@ static void proxy_free(proxy_conn_t *c) {
     c->status_code = 0;
 }
 
+static void close_client_conn(proxy_conn_t *c) {
+    if (!c) return;
+    int cfd = c->fd;
+    int ufd = c->upstream_fd;
+
+    if (cfd > 0) {
+        g_active_conns--;
+        nexus_log_error(1, "worker: closed conn, active=%d", g_active_conns);
+        close(cfd);
+        nexus_epoll_del(cfd);
+    }
+    if (ufd > 0) {
+        close(ufd);
+        nexus_epoll_del(ufd);
+    }
+    proxy_free(c);
+}
+
 static proxy_conn_t *proxy_get(int fd) {
     for (int i = 0; i < PROXY_POOL_SIZE; i++) {
         if (g_proxy_pool[i].fd == fd || g_proxy_pool[i].upstream_fd == fd) {
@@ -98,9 +121,7 @@ static int parse_listen_addr(const char *s, char *ip_out, int *port_out) {
 static void handle_client_read(proxy_conn_t *c) {
     ssize_t n = read(c->fd, c->req_buf, sizeof(c->req_buf) - 1);
     if (n <= 0) {
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
     c->req_buf[n] = '\0';
@@ -113,9 +134,7 @@ static void handle_client_read(proxy_conn_t *c) {
     nexus_http_req_init(&req);
     nexus_http_req_feed(&req, c->req_buf, c->req_len);
     if (req.state != HP_DONE) {
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
 
@@ -126,9 +145,7 @@ static void handle_client_read(proxy_conn_t *c) {
 
     const nexus_upstream_node_t *node = nexus_upstream_pick(&g_upstream);
     if (!node) {
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
 
@@ -139,9 +156,7 @@ static void handle_client_read(proxy_conn_t *c) {
     char serialized_req[4096];
     int serialized_len = nexus_http_req_serialize(&req, serialized_req, sizeof(serialized_req));
     if (serialized_len < 0) {
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
 
@@ -157,9 +172,7 @@ static void handle_client_read(proxy_conn_t *c) {
 
     int ufd = nexus_proxy_connect_upstream(node);
     if (ufd < 0) {
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
 
@@ -180,9 +193,7 @@ static void handle_upstream_writable(proxy_conn_t *c) {
     if (err) {
         close(ufd);
         nexus_epoll_del(ufd);
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
         return;
     }
 
@@ -233,16 +244,12 @@ static void handle_upstream_readable(proxy_conn_t *c) {
         // 关闭所有连接
         close(ufd);
         nexus_epoll_del(ufd);
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
     } else if (n == 0) {
         // 上游关闭连接
         close(ufd);
         nexus_epoll_del(ufd);
-        close(c->fd);
-        nexus_epoll_del(c->fd);
-        proxy_free(c);
+        close_client_conn(c);
     } else {
         // n < 0，检查错误
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -262,6 +269,11 @@ static void handle_upstream_readable(proxy_conn_t *c) {
 static void on_event(int fd, uint32_t ev, void *user) {
     (void)user;
     if (fd == g_listen_fd) {
+        // 排空模式下停止接受新连接（generation > my_gen 时才有效）
+        if (atomic_load(g_shutting_down) &&
+            atomic_load(g_drain_generation) > g_my_generation) {
+            return;
+        }
         client_addr_t client;
         int cfd = nexus_acceptor_accept_ext(g_listen_fd, &client);
         if (cfd >= 0) {
@@ -270,6 +282,8 @@ static void on_event(int fd, uint32_t ev, void *user) {
                 // Task 7: 记录客户端地址
                 snprintf(c->client_ip, sizeof(c->client_ip), "%s", client.ip);
                 c->client_port = client.port;
+                g_active_conns++;
+                nexus_log_error(1, "worker: accepted conn, active=%d", g_active_conns);
 
                 c->state = CONN_READING_REQ;
                 nexus_epoll_add(cfd, EPOLLIN, c);
@@ -293,6 +307,9 @@ int nexus_worker_run(nexus_config_t *cfg) {
     g_cfg = cfg;
     nexus_log_reset();
     nexus_log_init("logs", 1);
+
+    // 初始化共享内存指针（attach 到 Master 创建的共享内存）
+    nexus_shared_memory_init();
 
     // 初始化连接池
     memset(g_proxy_pool, 0, sizeof(g_proxy_pool));
@@ -320,10 +337,44 @@ int nexus_worker_run(nexus_config_t *cfg) {
     if (g_listen_fd < 0) { perror("listen"); return 1; }
     nexus_epoll_init();
     nexus_epoll_add(g_listen_fd, EPOLLIN, NULL);
-    nexus_log_error(1, "worker started on %s:%d", ip, port);
+    nexus_log_error(1, "worker [pid=%d] started on %s:%d", getpid(), ip, port);
+
+    // 记录 Worker 启动时的 drain generation
+    // 只有当 shutting_down 信号来自更早的 generation 时才响应
+    g_my_generation = atomic_load(g_drain_generation);
+    nexus_log_error(1, "worker [pid=%d] generation=%d", getpid(), g_my_generation);
+
+    static int last_shutting = 0;
+    static int first_loop = 1;
 
     while (1) {
         nexus_epoll_wait(100, on_event);
+        int current_shutting = atomic_load(g_shutting_down);
+        int current_generation = atomic_load(g_drain_generation);
+
+        // 只有信号来自更早的 generation 才是有效的排空信号
+        // 这避免了新 Worker 启动时立即响应旧 Worker 还未处理完的信号
+        int should_drain = current_shutting && (current_generation > g_my_generation);
+
+        // 只在状态变化时输出日志
+        if (first_loop || should_drain != last_shutting) {
+            nexus_log_error(1, "worker [pid=%d] drain_mode=%d (gen=%d), active=%d",
+                            getpid(), should_drain, current_generation, g_active_conns);
+            first_loop = 0;
+            last_shutting = should_drain;
+        }
+
+        if (should_drain && g_active_conns == 0) {
+            nexus_log_error(1, "worker [pid=%d] drained, exiting", getpid());
+            fflush(NULL);
+            break;
+        }
+        if (should_drain && g_active_conns > 0 && last_shutting == 0) {
+            nexus_log_error(1, "worker [pid=%d] draining %d active connections",
+                            getpid(), g_active_conns);
+        }
+        last_shutting = should_drain;
     }
+    nexus_log_close();
     return 0;
 }
