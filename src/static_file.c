@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 
 static const char *content_type(const char *path) {
     const char *dot = strrchr(path, '.');

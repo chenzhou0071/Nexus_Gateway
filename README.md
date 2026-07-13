@@ -243,11 +243,23 @@ tail -30 logs/error.log
 - ✅ 两轮热启动：连续两次 SIGHUP，三代 Worker 演进（gen 0→1→2），全部排空
 - ✅ 泄漏测试：多轮重启均为 `leaked=0`，无 Worker 被强杀
 
-### 📋 阶段 3：功能增强
+### ✅ 阶段 3：功能增强
 
-- [ ] 路由功能（路径前缀匹配）
-- [ ] 安全模块（限流、黑名单）
-- [ ] 监控统计（连接数、QPS、延迟）
+- [x] 限流模块（Token bucket，per-IP）
+- [x] 黑名单模块（IP 访问控制）
+- [x] 零拷贝模块（sendfile/splice 封装）
+- [x] 健康检测模块（TCP 探测 + 后台线程）
+- [x] 静态文件服务（Content-Type 检测 + sendfile）
+
+**零拷贝说明：**
+- 代码已实现 `nexus_zc_sendfile()` 和 `nexus_zc_splice()`
+- 部分环境（如老内核或容器）可能不支持 `sendfile(socket → socket)`
+
+### ✅ 阶段 4：集成 + 压测
+
+- [x] 集成所有模块到 worker（路由分发 + 黑名单/限流检查）
+- [x] wrk 压测脚本 + 报告（详见 [bench/result.md](bench/result.md)）
+- [x] README + 文档完善
 
 ## 技术亮点
 

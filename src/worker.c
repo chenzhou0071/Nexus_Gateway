@@ -11,6 +11,10 @@
 #include "nexus_config.h"
 #include "nexus_master.h"
 #include "nexus_util.h"
+#include "nexus_rate_limit.h"
+#include "nexus_blacklist.h"
+#include "nexus_health.h"
+#include "nexus_static.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +29,10 @@ static nexus_config_t *g_cfg = NULL;
 static nexus_upstream_t g_upstream;
 static int g_listen_fd = -1;
 static int g_active_conns = 0;
+
+static nexus_rate_limiter_t g_rl;
+static nexus_blacklist_t    g_bl;
+static nexus_health_checker_t *g_health = NULL;
 
 typedef struct {
     int          fd;
@@ -142,6 +150,35 @@ static void handle_client_read(proxy_conn_t *c) {
     snprintf(c->method, sizeof(c->method), "%s", req.method);
     snprintf(c->path, sizeof(c->path), "%s", req.path);
     snprintf(c->version, sizeof(c->version), "%s", req.version);
+
+    // 黑名单检查
+    if (nexus_bl_check(&g_bl, c->client_ip)) {
+        const char *resp = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+        ssize_t wret = write(c->fd, resp, strlen(resp));
+        (void)wret;
+        nexus_log_access("BLOCKED %s %s %s", c->client_ip, req.method, req.path);
+        close_client_conn(c);
+        return;
+    }
+    // 限流检查
+    if (!nexus_rl_check(&g_rl, c->client_ip)) {
+        const char *resp = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
+        ssize_t wret = write(c->fd, resp, strlen(resp));
+        (void)wret;
+        nexus_log_access("RATE_LIMITED %s %s %s", c->client_ip, req.method, req.path);
+        close_client_conn(c);
+        return;
+    }
+
+    // 路由分发：/static 前缀走静态文件服务
+    if (strncmp(req.path, "/static/", 8) == 0) {
+        const char *root = nexus_config_get(g_cfg, "upstream.static", "root");
+        if (!root) root = "/var/www/html";
+        nexus_static_serve(c->fd, root, req.path + 7);
+        nexus_log_access("STATIC %s %s %s", c->client_ip, req.method, req.path);
+        close_client_conn(c);
+        return;
+    }
 
     const nexus_upstream_node_t *node = nexus_upstream_pick(&g_upstream);
     if (!node) {
@@ -331,6 +368,20 @@ int nexus_worker_run(nexus_config_t *cfg) {
             nexus_upstream_add_node(&g_upstream, host, sport, 1);
         }
     }
+
+    int rate = nexus_config_get_int(cfg, "security", "rate_limit_per_ip", 100);
+    nexus_rl_init(&g_rl, rate);
+    nexus_bl_init(&g_bl);
+    const char *bl_csv = nexus_config_get(cfg, "security", "blacklist");
+    if (bl_csv) {
+        char *tmp = strdup(bl_csv);
+        for (char *tok = strtok(tmp, ", "); tok; tok = strtok(NULL, ", ")) {
+            nexus_bl_add(&g_bl, tok);
+        }
+        free(tmp);
+    }
+    g_health = nexus_health_create(&g_upstream, 5, 2);
+    nexus_health_start(g_health);
 
     int reuse_port = (getenv("NEXUS_WORKER") != NULL);
     g_listen_fd = nexus_acceptor_listen(ip, port, reuse_port);

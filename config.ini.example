@@ -4,7 +4,6 @@
 listen       = 0.0.0.0:8080
 worker_num   = auto
 log_level    = info
-max_conns    = 10000
 
 [upstream.api]
 # 加权轮询后端，weight 缺省 = 1
